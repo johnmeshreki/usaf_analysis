@@ -35,6 +35,29 @@ import os
 import sys
 from skimage.io import imread
 from matplotlib.backends.backend_pdf import PdfPages
+import errno
+import datetime
+from config import path_to_output
+
+def create_dir(date_today, date_now):
+    """Creates a directory."""
+    path_dir_w_time = f'{path_to_output}/{date_today}/{date_now}'
+    try:
+        os.makedirs(path_dir_w_time)
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+        pass
+    return path_dir_w_time
+
+def timestamp():
+    """Generates date and time strings."""
+    today = datetime.date.today()
+    date_today = today.strftime("%Y_%m_%d")
+    now = datetime.datetime.now()
+    date_now = now.strftime("%Y_%m_%d_%H_%M_%S")
+    return date_today, date_now
+
 
 #################### Rotate the image so the bars are X/Y aligned #############
 def find_image_orientation(gray_image, fuzziness = 5):
@@ -379,12 +402,16 @@ def analyse_image(gray_image, pdf=None):
         plt.close(f)
     return fig, parameters
     
-def analyse_file(filename, generate_pdf=True):
-    """Analyse the image file specified by the given filename"""
+def analyse_file(filename, output_dir, generate_pdf=True):
+    """Analyse the image file specified by the given filename."""
     gray_image = np.mean(imread(filename), axis=2).astype(np.uint8)
-    with PdfPages(filename+"_analysis.pdf") as pdf:
+
+    output_pdf = os.path.join(output_dir, os.path.basename(filename) + "_analysis.pdf")
+    output_txt = os.path.join(output_dir, os.path.basename(filename) + "_analysis.txt")
+
+    with PdfPages(output_pdf) as pdf:
         fig, parameters = analyse_image(gray_image, pdf)
-        with open(filename+"_analysis.txt",'w') as text:
+        with open(output_txt, 'w') as text:
             text.write("Assuming the smallest element is number {element} from group {group}.\n".format(**parameters))
             text.write("That means one pixel is {pixel_nm} +/- {pixel_nm_se} nm.\n".format(**parameters))
             text.write("The field of view is {field_of_view} um.\n".format(**parameters))
@@ -395,37 +422,38 @@ def analyse_file(filename, generate_pdf=True):
         fig.suptitle(filename)
         return fig, parameters
 
-def analyse_folders(datasets):
-    """Analyse a folder hierarchy containing a number of calibration images.
-    
-    Given a folder that contains a number of other folders (one per microscope usually),
-    find all the USAF images (<datasets>/*/usaf_*.jpg) and analyse them.  It also generates
-    a summary file in CSV format, and a PDF with all the images and the detected elements.
-    """
+def analyse_folders(datasets, output_dir):
+    """Analyse a folder hierarchy containing a number of calibration images."""
     files = []
-    for dir in [os.path.join(datasets, d) for d in os.listdir(datasets)]: # if d.startswith('6led')]:
+    for dir in [os.path.join(datasets, d) for d in os.listdir(datasets)]:
         files += [os.path.join(dir,f) for f in os.listdir(dir) if f.startswith("usaf_") and f.endswith(".jpg")]
     summary_data_columns = ['group', 'element', 'pixel_nm', 'pixel_nm_se', 'diagonal', 
                             'fractional_standard_error', 'smallest_period_pixels', 'smallest_period_se', 'pixels_x', 'pixels_y', 'field_of_view_x', 'field_of_view_y']
-    with PdfPages("usaf_calibration.pdf") as pdf, \
-        open("usaf_calibration_summary.csv", "w") as summary_text:
+
+    output_pdf = os.path.join(output_dir, "usaf_calibration.pdf")
+    output_csv = os.path.join(output_dir, "usaf_calibration_summary.csv")
+
+    with PdfPages(output_pdf) as pdf, open(output_csv, "w") as summary_text:
         summary_text.write("filename, " + ", ".join(summary_data_columns) + "\n")
         for filename in files:
             print("\nAnalysing file {}".format(filename))
-            fig, parameters = analyse_file(filename)
+            fig, parameters = analyse_file(filename, output_dir)
             pdf.savefig(fig)
             summary_text.write(", ".join([filename] + [str(parameters[c]) for c in summary_data_columns]) + "\n")
     
+# Main execution block
 if __name__ == '__main__':
     if len(sys.argv) == 1:
         print("Usage: {} <file_or_folder> [<file2> ...]".format(sys.argv[0]))
         print("If a file is specified, we produce <file>_analysis.pdf and <file>_analysis.txt")
         print("If a folder is specified, we produce usaf_calibration.pdf and usaf_calibration_summary.csv")
-        print("as well as the single-file analysis for <folder>/*/usaf_*.jpg")
-        print("Multiple files may be specified, using wildcards if your OS supports it - e.g. myfolder/calib*.jpg")
         exit(-1)
+
+    date_today, date_now = timestamp()
+    output_dir = create_dir(date_today, date_now)
+
     if len(sys.argv) == 2 and os.path.isdir(sys.argv[1]):
-        analyse_folders(sys.argv[1])
+        analyse_folders(sys.argv[1], output_dir)
     else:
         for filename in sys.argv[1:]:
-            analyse_file(filename)
+            analyse_file(filename, output_dir)
